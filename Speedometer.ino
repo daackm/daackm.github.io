@@ -164,6 +164,8 @@ ________________________________________________________________________________
    Version 0.52 added the logic to handle a locomotive with cars; was completed on 10 December 2018.
    Version 0.53 restructured the comments and added barrier strips on 08 April 2020.
    Version 0.54 Added "preamble" to display LDR value 5 times in Setup
+   Version 0.55 fixed a bug with the gap between cars
+   Version 0.56 added a count for the number of transits since PowerUp
 */
 
 
@@ -173,15 +175,16 @@ ________________________________________________________________________________
 
 
 
-
-
-
-const unsigned long trackLength=440;   //track loop length for the 3 loops of the BVD are 440, 1502, 831 inches
-const String scaleText="HO";           //even if entered in lower case, the program will handle it
+unsigned int gapflag=0;
+unsigned int gapcounter=0;
+unsigned int gapmax=100;
+unsigned int TransitCount=0;
+const unsigned long trackLength=831;   //track loop #1 length is 441 inches; #2 is 1502; #3 is 831; N is 122.
+const String scaleText="N";           //even if entered in lower case, the program will handle it
 const int display=0x27;
 unsigned couplerGapMinimum=3000;       //minimum time in milliseconds for an acceptable transit
 const unsigned long darkBoundary=500;  //at what light level do we consider it "dark"?
-                                       //if 500 doesn't trigger (high ambient light situations, 
+                                       //if 500 doesn't trigger (high ambient light situations), 
                                        //try 650, or try 250 in lower light environments
 
                                        
@@ -199,7 +202,7 @@ unsigned long transitElapsedTime;
 unsigned long shortElapsedTime;
 unsigned long couplerGapStart;
 unsigned long couplerGap;
-char version[]="0.55";
+char version[]="0.57";
 float transitElapsedTimeSec;
 float smph;                            //scale miles per hour
 unsigned long oldshortElapsedTime=0; 
@@ -348,14 +351,21 @@ void loop()                                       //GRAND LOOP
      {
       if(resistance<darkBoundary)  //have we triggered the sensor?
          {
+         lcd.setCursor(0,0);lcd.print("Timing Transit #    ");
+         TransitCount=TransitCount +1;
+         
          trainState=1;
          timeStart=millis();
-         oldshortElapsedTime=0;
+         lcd.setCursor(0,2);
+         lcd.print("                    ");
+         lcd.setCursor(0,2);
+         //lcd.print("trainState= ");
+         //lcd.print(trainState);
          lcd.setCursor(0,3);
          lcd.print("                    ");
          lcd.setCursor(0,0);
                   //12345678901234567890   How many characters are in the string?
-         lcd.print("Timing Transit      ");
+         lcd.print("Timing Transit #1   ");
          lcd.setCursor(0,1);
          lcd.print("                    ");
          lcd.setCursor(0,1);
@@ -363,59 +373,78 @@ void loop()                                       //GRAND LOOP
         }                             //end of resistance<darkBoundary
      }                                //end of trainState=0
 
-  if (trainState>0)                   //This updates the display clock once a second
-        {
-         elapsedTime=millis()-timeStart;
-         shortElapsedTime=elapsedTime/1000; 
-         if(shortElapsedTime>oldshortElapsedTime)  //Update display once a second
-           {
-            lcd.setCursor(14,1);
-            lcd.print(shortElapsedTime);
-            oldshortElapsedTime=shortElapsedTime;
-           }
-        }
 
-
-        
   if(trainState==1)               //train is passing over the sensor
-    {
-
-      if(resistance>darkBoundary)  //LDR is again bright, train has passed sensor, start the timer
-      {
-        trainState=2;              
-        couplerGapStart=millis();
-      }
+    {      
+      elapsedTime=millis()-timeStart;
+      shortElapsedTime=elapsedTime/1000;
+      if(shortElapsedTime>oldshortElapsedTime)  //Update display once a second
+         {
+          lcd.setCursor(14,1);
+          lcd.print(shortElapsedTime);
+          oldshortElapsedTime=shortElapsedTime;
+         }
+     
+      if(resistance>darkBoundary)
+         {   
+         
+            trainState=2;              //train has passed sensor, check to see if it is EOT or coupler gap
+         }
     }
 
- if(trainState==2)   //we are either between cars or the end of the train has passed
-    {
-      if(resistance<=darkBoundary)  //thing have gone dark over the LDR again, maybe because a car after the loco
-                                    //has been recognized,
-                                    //or maybe because the start of the train is completing its loop.  
-         {
-         if(millis()>(couplerGapStart+couplerGapMinimum))  //we have been light for enough time and have reached the end on the train
-                                             //so start looking for the LDR to go dark again, and when it does, 
-                                             //print the results
-           {
-            trainState=5;
-           }           
-         else
-           {                                 //things have gone light and then dark between cars, so go back as if
-                                             //the loco was still passing over the LDR
-            trainState=1;
-           }
-            
-                //end of millis compared to couplerGapStart+couplerGapMinimum
-         }   //end of resistance<=darkBoundary        
-    }   //end of trainState==2
 
-if(trainState==5)               //train has completed transit over sensor; await its return
+
+    
+if(trainState==2)  //we have encountered a bright spot, either a coupler gap or end of train.
+                   //if the current resistance < darkBoundary (indicating another car has covered the sensor)
+                   //then set trainState back to 1.  But otherwise (ie: it is still bright), it indicated we 
+                   //are in a series of bright, and it may be the EOT.  
+                   //it the gapcounter has exceeded gapMax, consider it as the end of train
+   {
+     
+      elapsedTime=millis()-timeStart;
+      shortElapsedTime=elapsedTime/1000;
+      if(shortElapsedTime>oldshortElapsedTime)  //Update display once a second
+         {
+          lcd.setCursor(14,1);
+          lcd.print(shortElapsedTime);
+          oldshortElapsedTime=shortElapsedTime;
+         }
+    
+    resistance=(analogRead(photocellPin));
+    if (resistance<darkBoundary)
+       {
+        trainState=1; 
+        gapcounter=0; 
+       }
+       else
+       {
+           gapcounter=gapcounter+1;
+           if (gapcounter>gapmax)
+              {
+               trainState=3;  //End of train
+               gapcounter=0; 
+              }
+        }
+   }
+
+
+
+
+
+
+
+
+
+   
+if(trainState==3)               //train has completed transit over sensor; await its return
     {
       elapsedTime=millis()-timeStart;
-      //lcd.setCursor(14,1);
-      //lcd.print(elapsedTime/1000.0,0);
+      lcd.setCursor(14,1);
+      lcd.print(elapsedTime/1000.0,0);
 
-      if(resistance<darkBoundary)    //train has again passed sensor, report findings and restart timer
+      if(resistance<darkBoundary)    //sensor is covered!  Are we in a coupler gap
+                                     //or has the locomotive returned and we should report findings and restart timer
       {
         couplerGap=millis()-couplerGapStart;
           Serial.println(" ");
@@ -427,13 +456,26 @@ if(trainState==5)               //train has completed transit over sensor; await
                                            //otherwise, assume it is a gap between cars
         {
          Serial.println("minimum time has past");
-         lcd.setCursor(0,0);lcd.print("Timing Transit      ");
+         lcd.setCursor(0,0);lcd.print("Timing Transit #    ");
+         TransitCount=TransitCount +1;
+         
+  if(TransitCount>1000)
+     {
+      TransitCount=1;
+     }
+         lcd.setCursor(16,0);lcd.print(TransitCount);
          trainState=1;
+         lcd.setCursor(0,2);
+         lcd.print("                    ");
+         lcd.setCursor(0,2);
+         //lcd.print("trainState= ");
+         //lcd.print(trainState);
          transitElapsedTime=elapsedTime;
          transitElapsedTimeSec=transitElapsedTime/1000.0;
          timeStart=millis();
-         lcd.setCursor(0,3);
-         lcd.print("                    ");
+         
+         lcd.setCursor(0,2);
+         lcd.print("Previous Transit:   ");
          lcd.setCursor(0,3);
          lcd.print(transitElapsedTimeSec,1);
          lcd.print(" sec  ");
@@ -447,6 +489,44 @@ if(trainState==5)               //train has completed transit over sensor; await
          lcd.print("     ");
          oldshortElapsedTime=0;
         }      //end of couplerGap test TRUE
+        else   //beginning of couplerGap test FALSE
+        {
+          //we are in this piece of logic because the sensor has gone dark (it is covered), 
+          //but the minimum time of lightness has not occurred (ie: we have a gap between a 
+          //locomotive and its cars, or between cars).  SO, we want to wait for lightness to 
+          //again occur, and then return to the state where we are checking
+          //for a return to darkness after an acceptable time.
+          trainState=2;
+         lcd.setCursor(0,2);
+         lcd.print("                    ");
+         //lcd.setCursor(0,2);
+         //lcd.print("CLE trainState= ");
+         //lcd.print(trainState);
+          Serial.println("couplerGap logic entered");
+          do
+          {
+          resistance=(analogRead(photocellPin));
+          delay(sampleRate);
+          }
+          while (resistance>darkBoundary);    //end of do while
+
+
+
+
+
+
+         lcd.setCursor(0,2);
+         lcd.print("                    ");
+         //lcd.setCursor(0,2);
+         //lcd.print("CLEAR trainState= ");
+         //lcd.print(trainState);
+
+
+
+          
+          Serial.print("exiting couplerGap logic.  elapsedTime=");Serial.println(elapsedTime,1);          
+          couplerGapStart=millis();
+        }     //end of else
       }       //end of resistance>darkBoundary
    }          //end of trainState=2
 
@@ -459,6 +539,13 @@ if(trainState==5)               //train has completed transit over sensor; await
           lcd.setCursor(0,3);
           lcd.print("Transit Timeout     ");
           trainState=0;
+          
+         lcd.setCursor(0,2);
+         lcd.print("                    ");
+         //lcd.setCursor(0,2);
+         //lcd.print("trainState= ");
+         //lcd.print(trainState);
+         
           lcd.setCursor(0,0);
           lcd.print("                    ");
           lcd.setCursor(0,0);
